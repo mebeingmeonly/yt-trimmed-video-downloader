@@ -1,5 +1,5 @@
 // ==========================================================================
-// Geist Monochrome YouTube MP3 Cutter — Client Application
+// Geist Monochrome YouTube MP3 Cutter — In-Browser Trimmer & Instant Exporter
 // ==========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -7,19 +7,39 @@ document.addEventListener('DOMContentLoaded', () => {
   const ytUrlInput = document.getElementById('ytUrlInput');
   const pasteBtn = document.getElementById('pasteBtn');
   const clearBtn = document.getElementById('clearBtn');
+  const loadAudioBtn = document.getElementById('loadAudioBtn');
+  const loadAudioBtnText = document.getElementById('loadAudioBtnText');
+  const loadSpinner = loadAudioBtn.querySelector('.btn-spinner');
+  const loadIcon = loadAudioBtn.querySelector('.btn-icon');
   const urlStatus = document.getElementById('urlStatus');
   const sampleChips = document.querySelectorAll('.sample-chip');
 
-  // Preview elements
-  const videoPreviewCard = document.getElementById('videoPreviewCard');
+  // Processing & Workbench
+  const processingCard = document.getElementById('processingCard');
+  const progressBar = document.getElementById('progressBar');
+  const processingTitle = document.getElementById('processingTitle');
+  const processingSub = document.getElementById('processingSub');
+  const workbenchCard = document.getElementById('workbenchCard');
+
+  // Track info
   const videoThumb = document.getElementById('videoThumb');
   const videoTitle = document.getElementById('videoTitle');
   const videoAuthor = document.getElementById('videoAuthor');
   const videoDurationBadge = document.getElementById('videoDurationBadge');
   const videoDurationPill = document.getElementById('videoDurationPill');
 
-  // Trim configuration elements
-  const trimCard = document.getElementById('trimCard');
+  // Audio Player & Visualizer
+  const audioSource = document.getElementById('audioSource');
+  const waveformCanvas = document.getElementById('waveformCanvas');
+  const waveformCutOverlay = document.getElementById('waveformCutOverlay');
+  const playheadMarker = document.getElementById('playheadMarker');
+  const playPauseBtn = document.getElementById('playPauseBtn');
+  const playIcon = document.getElementById('playIcon');
+  const pauseIcon = document.getElementById('pauseIcon');
+  const previewCutBtn = document.getElementById('previewCutBtn');
+  const playerTimer = document.getElementById('playerTimer');
+
+  // Trimming controls
   const modeStartTill = document.getElementById('modeStartTill');
   const modeCustomRange = document.getElementById('modeCustomRange');
   const startTimeGroup = document.getElementById('startTimeGroup');
@@ -28,8 +48,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const endTimeInput = document.getElementById('endTimeInput');
   const endLabel = document.getElementById('endLabel');
   const calculatedDurationBadge = document.getElementById('calculatedDurationBadge');
-
-  // Scrubber & Sliders
   const timeSlider = document.getElementById('timeSlider');
   const sliderFill = document.getElementById('sliderFill');
   const scrubberStartLabel = document.getElementById('scrubberStartLabel');
@@ -37,33 +55,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const quickChips = document.querySelectorAll('.chip-btn');
   const fullDurationChip = document.getElementById('fullDurationChip');
 
-  // Convert & Processing
-  const convertBtn = document.getElementById('convertBtn');
-  const convertBtnText = document.getElementById('convertBtnText');
-  const btnSpinner = convertBtn.querySelector('.btn-spinner');
-  const btnIcon = convertBtn.querySelector('.btn-icon');
-  const processingCard = document.getElementById('processingCard');
-  const progressBar = document.getElementById('progressBar');
-  const processingTitle = document.getElementById('processingTitle');
-  const processingSub = document.getElementById('processingSub');
-
-  // Result & Audio Player
-  const resultCard = document.getElementById('resultCard');
-  const resultTitle = document.getElementById('resultTitle');
-  const resultAuthor = document.getElementById('resultAuthor');
-  const resultMetaBadge = document.getElementById('resultMetaBadge');
-  const downloadLink = document.getElementById('downloadLink');
-  const copyLinkBtn = document.getElementById('copyLinkBtn');
-  const simulationNotice = document.getElementById('simulationNotice');
-  const simulationText = document.getElementById('simulationText');
-
-  const audioPreviewPlayer = document.getElementById('audioPreviewPlayer');
-  const playPauseBtn = document.getElementById('playPauseBtn');
-  const playIcon = document.getElementById('playIcon');
-  const pauseIcon = document.getElementById('pauseIcon');
-  const playerTimeline = document.querySelector('.player-timeline');
-  const playerProgress = document.getElementById('playerProgress');
-  const playerTimer = document.getElementById('playerTimer');
+  // Actions
+  const downloadTrimmedBtn = document.getElementById('downloadTrimmedBtn');
+  const downloadTrimmedBtnText = document.getElementById('downloadTrimmedBtnText');
+  const trimmedSpinner = downloadTrimmedBtn.querySelector('.btn-spinner');
+  const trimmedIcon = downloadTrimmedBtn.querySelector('.btn-icon');
+  const downloadFullBtn = document.getElementById('downloadFullBtn');
 
   // History & System Modal
   const historyList = document.getElementById('historyList');
@@ -76,11 +73,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const nodeVersionBadge = document.getElementById('nodeVersionBadge');
 
   // State
-  let currentVideoData = null;
+  let currentAudioData = null;
+  let decodedAudioBuffer = null;
+  let audioContext = null;
   let activeMode = 'till'; // 'till' or 'range'
-  let totalVideoDuration = 240; // Default 4 mins
-  let currentCutDuration = 60; // Default 1 min
-  let debounceTimeout = null;
+  let totalVideoDuration = 210;
+  let isPreviewingCut = false;
+  let cutPreviewStopTimer = null;
+
+  // Web Audio Context setup
+  function getAudioContext() {
+    if (!audioContext) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      audioContext = new AudioCtx();
+    }
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+    return audioContext;
+  }
 
   // ==========================================================================
   // Helper Utilities
@@ -97,14 +108,14 @@ document.addEventListener('DOMContentLoaded', () => {
     return 0;
   }
 
-  function formatSecondsToTime(seconds, forceHours = false) {
+  function formatSecondsToTime(seconds) {
     const s = Math.max(0, Math.floor(seconds));
     const hrs = Math.floor(s / 3600);
     const mins = Math.floor((s % 3600) / 60);
     const secs = s % 60;
     const pad = n => String(n).padStart(2, '0');
 
-    if (hrs > 0 || forceHours) {
+    if (hrs > 0) {
       return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
     }
     return `${pad(mins)}:${pad(secs)}`;
@@ -117,32 +128,19 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ==========================================================================
-  // URL Input & Metadata Fetching
+  // URL Input & Actions
   // ==========================================================================
 
   ytUrlInput.addEventListener('input', () => {
     const val = ytUrlInput.value.trim();
     clearBtn.style.display = val ? 'flex' : 'none';
-
-    clearTimeout(debounceTimeout);
-    if (!val) {
-      hideUrlStatus();
-      hideVideoPreview();
-      return;
-    }
-
-    if (isValidYoutubeUrl(val)) {
-      debounceTimeout = setTimeout(() => {
-        fetchVideoInfo(val);
-      }, 400);
-    }
+    if (!val) hideUrlStatus();
   });
 
   clearBtn.addEventListener('click', () => {
     ytUrlInput.value = '';
     clearBtn.style.display = 'none';
     hideUrlStatus();
-    hideVideoPreview();
     ytUrlInput.focus();
   });
 
@@ -153,7 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (text) {
           ytUrlInput.value = text.trim();
           clearBtn.style.display = 'flex';
-          fetchVideoInfo(text.trim());
+          startLoadAudioFlow(text.trim());
         }
       } else {
         ytUrlInput.focus();
@@ -168,8 +166,17 @@ document.addEventListener('DOMContentLoaded', () => {
       const url = chip.getAttribute('data-url');
       ytUrlInput.value = url;
       clearBtn.style.display = 'flex';
-      fetchVideoInfo(url);
+      startLoadAudioFlow(url);
     });
+  });
+
+  loadAudioBtn.addEventListener('click', () => {
+    const url = ytUrlInput.value.trim();
+    if (!url) {
+      showUrlStatus('Please enter a YouTube link first.', 'error');
+      return;
+    }
+    startLoadAudioFlow(url);
   });
 
   function showUrlStatus(msg, type = 'loading') {
@@ -182,60 +189,171 @@ document.addEventListener('DOMContentLoaded', () => {
     urlStatus.style.display = 'none';
   }
 
-  function hideVideoPreview() {
-    videoPreviewCard.style.display = 'none';
-    trimCard.style.display = 'none';
-    resultCard.style.display = 'none';
-    currentVideoData = null;
-  }
+  // ==========================================================================
+  // Fetch Full Audio from YouTube
+  // ==========================================================================
 
-  async function fetchVideoInfo(url) {
-    showUrlStatus('Fetching video information...', 'loading');
+  async function startLoadAudioFlow(url) {
+    if (!isValidYoutubeUrl(url)) {
+      showUrlStatus('Invalid YouTube URL. Please check your link.', 'error');
+      return;
+    }
+
+    showUrlStatus('Connecting to YouTube...', 'loading');
+    setLoadingState(true);
+    workbenchCard.style.display = 'none';
+    processingCard.style.display = 'block';
+    processingCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    let progress = 12;
+    progressBar.style.width = '12%';
+    const progressInterval = setInterval(() => {
+      progress = Math.min(94, progress + Math.floor(Math.random() * 6) + 3);
+      progressBar.style.width = `${progress}%`;
+    }, 320);
+
     try {
-      const res = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+      const res = await fetch('/api/full-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+
       const data = await res.json();
+      clearInterval(progressInterval);
 
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to retrieve video');
+        throw new Error(data.error || 'Failed to extract audio');
       }
 
-      currentVideoData = data;
+      progressBar.style.width = '100%';
+      processingTitle.textContent = 'Audio ready! Loading in browser...';
+      processingSub.textContent = 'Decoding waveform for instant trimming';
+
+      currentAudioData = data;
       hideUrlStatus();
-      renderVideoInfo(data);
+
+      // Load into audio element and decode buffer in background
+      await loadAndDecodeAudio(data);
+
+      setTimeout(() => {
+        processingCard.style.display = 'none';
+        setLoadingState(false);
+        renderWorkbench(data);
+      }, 400);
+
     } catch (err) {
-      showUrlStatus(err.message || 'Error fetching video', 'error');
-      hideVideoPreview();
+      clearInterval(progressInterval);
+      processingCard.style.display = 'none';
+      setLoadingState(false);
+      showUrlStatus(err.message || 'Error fetching audio', 'error');
     }
   }
 
-  function renderVideoInfo(data) {
+  function setLoadingState(isLoading) {
+    loadAudioBtn.disabled = isLoading;
+    loadSpinner.style.display = isLoading ? 'inline-block' : 'none';
+    loadIcon.style.display = isLoading ? 'none' : 'inline-block';
+    loadAudioBtnText.textContent = isLoading ? 'Fetching YouTube Audio...' : 'Load Full Audio';
+  }
+
+  // ==========================================================================
+  // Web Audio Decoding & Waveform Rendering
+  // ==========================================================================
+
+  async function loadAndDecodeAudio(data) {
+    audioSource.pause();
+    audioSource.src = data.streamUrl;
+    audioSource.load();
+
+    try {
+      const ctx = getAudioContext();
+      const response = await fetch(data.streamUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      decodedAudioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      drawWaveform(decodedAudioBuffer);
+    } catch (e) {
+      console.warn('WebAudio decode warning:', e);
+      drawFallbackWaveform();
+    }
+  }
+
+  function drawWaveform(buffer) {
+    const canvas = waveformCanvas;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.offsetWidth;
+    const height = canvas.height;
+    canvas.width = width;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const data = buffer.getChannelData(0);
+    const step = Math.ceil(data.length / width);
+    const amp = height / 2;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+
+    for (let i = 0; i < width; i++) {
+      let min = 1.0;
+      let max = -1.0;
+      for (let j = 0; j < step; j++) {
+        const datum = data[(i * step) + j];
+        if (datum < min) min = datum;
+        if (datum > max) max = datum;
+      }
+      const barHeight = Math.max(2, (max - min) * amp);
+      const y = (height - barHeight) / 2;
+      ctx.fillRect(i, y, 1, barHeight);
+    }
+  }
+
+  function drawFallbackWaveform() {
+    const canvas = waveformCanvas;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.offsetWidth;
+    const height = canvas.height;
+    canvas.width = width;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+
+    const bars = Math.floor(width / 3);
+    for (let i = 0; i < bars; i++) {
+      const h = Math.max(4, Math.sin(i * 0.15) * 16 + Math.random() * 12 + 6);
+      ctx.fillRect(i * 3, (height - h) / 2, 2, h);
+    }
+  }
+
+  // ==========================================================================
+  // Workbench Render & Trimming Controls
+  // ==========================================================================
+
+  function renderWorkbench(data) {
     videoTitle.textContent = data.title;
     videoAuthor.textContent = data.author;
     videoThumb.src = data.thumbnail;
     videoDurationBadge.textContent = data.durationFormatted;
-    videoDurationPill.textContent = `Duration: ${data.durationFormatted}`;
+    videoDurationPill.textContent = `Total: ${data.durationFormatted}`;
 
-    totalVideoDuration = data.duration || 240;
+    totalVideoDuration = data.duration || 210;
     timeSlider.max = totalVideoDuration;
     scrubberEndLabel.textContent = formatSecondsToTime(totalVideoDuration);
 
-    // Initial default: 1 minute or half total
-    const defaultEnd = Math.min(60, totalVideoDuration);
-    endTimeInput.value = formatSecondsToTime(defaultEnd);
-    timeSlider.value = defaultEnd;
-    updateDurationCalculations();
+    // Initial default cut: first 30 seconds
+    const defaultCut = Math.min(30, totalVideoDuration);
+    startTimeInput.value = '00:00';
+    endTimeInput.value = formatSecondsToTime(defaultCut);
+    timeSlider.value = defaultCut;
+    updateTrimCalculations();
 
-    videoPreviewCard.style.display = 'block';
-    trimCard.style.display = 'block';
+    downloadFullBtn.href = data.downloadUrl;
+    downloadFullBtn.setAttribute('download', data.filename);
 
-    // Smooth scroll into view on mobile
-    trimCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    workbenchCard.style.display = 'block';
+    workbenchCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
-  // ==========================================================================
-  // Mode Toggling (Till vs Custom Range)
-  // ==========================================================================
-
+  // Mode Toggling
   modeStartTill.addEventListener('click', () => {
     activeMode = 'till';
     modeStartTill.classList.add('active');
@@ -243,7 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
     startTimeGroup.style.display = 'none';
     startTimeInput.value = '00:00';
     endLabel.textContent = 'Till Timestamp (Cut up to)';
-    updateDurationCalculations();
+    updateTrimCalculations();
   });
 
   modeCustomRange.addEventListener('click', () => {
@@ -252,34 +370,36 @@ document.addEventListener('DOMContentLoaded', () => {
     modeStartTill.classList.remove('active');
     startTimeGroup.style.display = 'block';
     endLabel.textContent = 'To (End)';
-    updateDurationCalculations();
+    updateTrimCalculations();
   });
 
   startResetBtn.addEventListener('click', () => {
     startTimeInput.value = '00:00';
-    updateDurationCalculations();
+    updateTrimCalculations();
   });
 
-  // ==========================================================================
-  // Timestamps & Slider Calculations
-  // ==========================================================================
-
-  function updateDurationCalculations() {
+  function updateTrimCalculations() {
     const startSec = activeMode === 'range' ? parseTimeToSeconds(startTimeInput.value) : 0;
     const endSec = parseTimeToSeconds(endTimeInput.value);
 
     let cutDuration = Math.max(0, endSec - startSec);
-    currentCutDuration = cutDuration;
-
     calculatedDurationBadge.textContent = `Duration: ${formatSecondsToTime(cutDuration)}`;
     scrubberStartLabel.textContent = formatSecondsToTime(startSec);
 
-    // Sync slider
+    // Slider position
     timeSlider.value = endSec;
     const pct = totalVideoDuration > 0 ? (endSec / totalVideoDuration) * 100 : 0;
     sliderFill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
 
-    // Highlight matching chip
+    // Visual Waveform Cut Overlay
+    if (totalVideoDuration > 0) {
+      const leftPct = (startSec / totalVideoDuration) * 100;
+      const widthPct = (cutDuration / totalVideoDuration) * 100;
+      waveformCutOverlay.style.left = `${Math.max(0, leftPct)}%`;
+      waveformCutOverlay.style.width = `${Math.min(100 - leftPct, widthPct)}%`;
+    }
+
+    // Active preset chip
     quickChips.forEach(chip => {
       const chipSec = chip.getAttribute('data-seconds');
       if (chipSec === 'full') {
@@ -290,19 +410,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Slider input
+  // Slider Input
   timeSlider.addEventListener('input', (e) => {
     const val = parseInt(e.target.value, 10);
     endTimeInput.value = formatSecondsToTime(val);
-    updateDurationCalculations();
+    updateTrimCalculations();
   });
 
-  // Direct manual time inputs
+  // Direct Time Inputs
   endTimeInput.addEventListener('blur', () => {
     const sec = parseTimeToSeconds(endTimeInput.value);
     const clamped = Math.min(totalVideoDuration, Math.max(1, sec));
     endTimeInput.value = formatSecondsToTime(clamped);
-    updateDurationCalculations();
+    updateTrimCalculations();
   });
 
   startTimeInput.addEventListener('blur', () => {
@@ -310,7 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const endSec = parseTimeToSeconds(endTimeInput.value);
     const clamped = Math.min(Math.max(0, endSec - 1), Math.max(0, sec));
     startTimeInput.value = formatSecondsToTime(clamped);
-    updateDurationCalculations();
+    updateTrimCalculations();
   });
 
   // Quick preset chips
@@ -323,173 +443,67 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         const secs = parseInt(secVal, 10);
         if (activeMode === 'range') {
-          const currentStart = parseTimeToSeconds(startTimeInput.value);
-          endTimeInput.value = formatSecondsToTime(currentStart + secs);
+          const curStart = parseTimeToSeconds(startTimeInput.value);
+          endTimeInput.value = formatSecondsToTime(curStart + secs);
         } else {
           startTimeInput.value = '00:00';
           endTimeInput.value = formatSecondsToTime(secs);
         }
       }
-      updateDurationCalculations();
+      updateTrimCalculations();
     });
   });
 
   // ==========================================================================
-  // Conversion & Audio Extraction Execution
+  // Audio Player & Cut Preview
   // ==========================================================================
 
-  convertBtn.addEventListener('click', async () => {
-    if (!currentVideoData) return;
-
-    const startSec = activeMode === 'range' ? parseTimeToSeconds(startTimeInput.value) : 0;
-    const endSec = parseTimeToSeconds(endTimeInput.value);
-
-    if (endSec <= startSec) {
-      alert('End timestamp must be greater than start timestamp.');
-      return;
-    }
-
-    const selectedBitrate = document.querySelector('input[name="bitrate"]:checked')?.value || '192';
-
-    // UI Loading State
-    setConvertingState(true);
-    resultCard.style.display = 'none';
-    processingCard.style.display = 'block';
-    processingCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-    // Progress animation
-    let progress = 10;
-    progressBar.style.width = '10%';
-    const progressInterval = setInterval(() => {
-      progress = Math.min(92, progress + Math.floor(Math.random() * 8) + 4);
-      progressBar.style.width = `${progress}%`;
-    }, 280);
-
-    try {
-      const payload = {
-        url: currentVideoData.url,
-        title: currentVideoData.title,
-        author: currentVideoData.author,
-        thumbnail: currentVideoData.thumbnail,
-        startTime: formatSecondsToTime(startSec),
-        endTime: formatSecondsToTime(endSec),
-        bitrate: selectedBitrate
-      };
-
-      const response = await fetch('/api/convert', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      clearInterval(progressInterval);
-      progressBar.style.width = '100%';
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Conversion failed');
-      }
-
-      setTimeout(() => {
-        processingCard.style.display = 'none';
-        setConvertingState(false);
-        renderResult(data);
-        saveToHistory(data);
-      }, 350);
-
-    } catch (err) {
-      clearInterval(progressInterval);
-      processingCard.style.display = 'none';
-      setConvertingState(false);
-      alert(`Download Error: ${err.message}`);
+  playPauseBtn.addEventListener('click', () => {
+    if (audioSource.paused) {
+      isPreviewingCut = false;
+      clearTimeout(cutPreviewStopTimer);
+      audioSource.play().catch(e => console.log('Playback error:', e));
+      showPauseIcon();
+    } else {
+      audioSource.pause();
+      showPlayIcon();
     }
   });
 
-  function setConvertingState(isConverting) {
-    convertBtn.disabled = isConverting;
-    btnSpinner.style.display = isConverting ? 'inline-block' : 'none';
-    btnIcon.style.display = isConverting ? 'none' : 'inline-block';
-    convertBtnText.textContent = isConverting ? 'Processing Audio...' : 'Cut & Download MP3';
-  }
+  // Preview cut section only
+  previewCutBtn.addEventListener('click', () => {
+    const startSec = activeMode === 'range' ? parseTimeToSeconds(startTimeInput.value) : 0;
+    const endSec = parseTimeToSeconds(endTimeInput.value);
 
-  // ==========================================================================
-  // Render Result & In-Browser Audio Player
-  // ==========================================================================
+    clearTimeout(cutPreviewStopTimer);
+    isPreviewingCut = true;
 
-  function renderResult(data) {
-    resultTitle.textContent = data.title;
-    resultAuthor.textContent = data.author;
-    resultMetaBadge.textContent = `${data.startFormatted} - ${data.endFormatted} • ${data.bitrate}`;
+    audioSource.currentTime = startSec;
+    audioSource.play().catch(e => console.log('Playback error:', e));
+    showPauseIcon();
 
-    downloadLink.href = data.downloadUrl;
-    downloadLink.setAttribute('download', data.filename);
-
-    copyLinkBtn.onclick = () => {
-      const fullUrl = window.location.origin + data.downloadUrl;
-      navigator.clipboard.writeText(fullUrl).then(() => {
-        copyLinkBtn.innerHTML = `<span>Copied!</span>`;
-        setTimeout(() => {
-          copyLinkBtn.innerHTML = `
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy Link</span>
-          `;
-        }, 2000);
-      });
-    };
-
-    if (data.isSimulated) {
-      simulationText.textContent = data.simulationNotice || 'Sample preview audio generated.';
-      simulationNotice.style.display = 'flex';
-    } else {
-      simulationNotice.style.display = 'none';
-    }
-
-    // Set up audio player
-    setupAudioPlayer(data.streamUrl, data.duration);
-
-    resultCard.style.display = 'block';
-    resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
-
-  function setupAudioPlayer(streamUrl, durationSec) {
-    audioPreviewPlayer.pause();
-    audioPreviewPlayer.src = streamUrl;
-    playerProgress.style.width = '0%';
-    playerTimer.textContent = `00:00 / ${formatSecondsToTime(durationSec)}`;
-    showPlayIcon();
-
-    playPauseBtn.onclick = () => {
-      if (audioPreviewPlayer.paused) {
-        audioPreviewPlayer.play().catch(e => console.log('Autoplay error:', e));
-        showPauseIcon();
-      } else {
-        audioPreviewPlayer.pause();
-        showPlayIcon();
-      }
-    };
-
-    audioPreviewPlayer.ontimeupdate = () => {
-      const cur = audioPreviewPlayer.currentTime;
-      const dur = audioPreviewPlayer.duration || durationSec;
-      const pct = (cur / dur) * 100;
-      playerProgress.style.width = `${pct}%`;
-      playerTimer.textContent = `${formatSecondsToTime(cur)} / ${formatSecondsToTime(dur)}`;
-    };
-
-    audioPreviewPlayer.onended = () => {
+    const durationMs = (endSec - startSec) * 1000;
+    cutPreviewStopTimer = setTimeout(() => {
+      audioSource.pause();
       showPlayIcon();
-      playerProgress.style.width = '0%';
-    };
+      isPreviewingCut = false;
+    }, durationMs);
+  });
 
-    playerTimeline.onclick = (e) => {
-      const rect = playerTimeline.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const pct = clickX / rect.width;
-      const dur = audioPreviewPlayer.duration || durationSec;
-      audioPreviewPlayer.currentTime = pct * dur;
-    };
-  }
+  audioSource.ontimeupdate = () => {
+    const cur = audioSource.currentTime;
+    const dur = audioSource.duration || totalVideoDuration;
+    playerTimer.textContent = `${formatSecondsToTime(cur)} / ${formatSecondsToTime(dur)}`;
+
+    if (dur > 0) {
+      const pct = (cur / dur) * 100;
+      playheadMarker.style.left = `${Math.min(100, Math.max(0, pct))}%`;
+    }
+  };
+
+  audioSource.onended = () => {
+    showPlayIcon();
+  };
 
   function showPlayIcon() {
     playIcon.style.display = 'block';
@@ -499,6 +513,139 @@ document.addEventListener('DOMContentLoaded', () => {
   function showPauseIcon() {
     playIcon.style.display = 'none';
     pauseIcon.style.display = 'block';
+  }
+
+  // Click on waveform to seek
+  waveformCanvas.parentElement.addEventListener('click', (e) => {
+    const rect = waveformCanvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const pct = clickX / rect.width;
+    const dur = audioSource.duration || totalVideoDuration;
+    audioSource.currentTime = pct * dur;
+  });
+
+  // ==========================================================================
+  // Instant In-Browser MP3 Trimming & Export (Web Audio + LameJS)
+  // ==========================================================================
+
+  downloadTrimmedBtn.addEventListener('click', async () => {
+    if (!currentAudioData) return;
+
+    const startSec = activeMode === 'range' ? parseTimeToSeconds(startTimeInput.value) : 0;
+    const endSec = parseTimeToSeconds(endTimeInput.value);
+
+    if (endSec <= startSec) {
+      alert('End timestamp must be greater than start timestamp.');
+      return;
+    }
+
+    setExportingState(true);
+
+    try {
+      // If we don't have decoded buffer yet, decode it now
+      if (!decodedAudioBuffer) {
+        const ctx = getAudioContext();
+        const response = await fetch(currentAudioData.streamUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        decodedAudioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      }
+
+      // Encode trimmed slice to MP3 in memory using lamejs
+      const mp3Blob = encodeAudioSliceToMp3(decodedAudioBuffer, startSec, endSec, 192);
+
+      // Trigger instant browser download
+      const cleanTitle = (currentAudioData.title || 'audio')
+        .replace(/[^\w\s\-_.]/gi, '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .slice(0, 40) || 'track';
+
+      const filename = `${cleanTitle}_cut_${formatSecondsToTime(startSec).replace(/:/g, '-')}_to_${formatSecondsToTime(endSec).replace(/:/g, '-')}.mp3`;
+      const blobUrl = URL.createObjectURL(mp3Blob);
+
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      // Save to history
+      saveToHistory({
+        title: currentAudioData.title,
+        filename,
+        downloadUrl: blobUrl,
+        startFormatted: formatSecondsToTime(startSec),
+        endFormatted: formatSecondsToTime(endSec),
+        durationFormatted: formatSecondsToTime(endSec - startSec),
+        bitrate: '192 kbps'
+      });
+
+      setExportingState(false);
+
+    } catch (err) {
+      console.error('Client-side trimming error:', err);
+      setExportingState(false);
+      alert(`Export Error: ${err.message}`);
+    }
+  });
+
+  function setExportingState(isExporting) {
+    downloadTrimmedBtn.disabled = isExporting;
+    trimmedSpinner.style.display = isExporting ? 'inline-block' : 'none';
+    trimmedIcon.style.display = isExporting ? 'none' : 'inline-block';
+    downloadTrimmedBtnText.textContent = isExporting ? 'Exporting MP3...' : 'Download Trimmed MP3';
+  }
+
+  // Pure Client-side MP3 encoding function using LameJS
+  function encodeAudioSliceToMp3(buffer, startSec, endSec, bitrate = 192) {
+    if (typeof lamejs === 'undefined') {
+      throw new Error('LameJS MP3 encoder library not loaded');
+    }
+
+    const sampleRate = buffer.sampleRate;
+    const numChannels = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sampleRate);
+    const endSample = Math.min(buffer.length, Math.floor(endSec * sampleRate));
+
+    const mp3encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, bitrate);
+    const mp3Data = [];
+
+    function floatToInt16(floatArr) {
+      const int16 = new Int16Array(floatArr.length);
+      for (let i = 0; i < floatArr.length; i++) {
+        const s = Math.max(-1, Math.min(1, floatArr[i]));
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return int16;
+    }
+
+    const leftFloat = buffer.getChannelData(0).subarray(startSample, endSample);
+    const leftInt16 = floatToInt16(leftFloat);
+    const sampleBlockSize = 1152;
+
+    if (numChannels === 1) {
+      for (let i = 0; i < leftInt16.length; i += sampleBlockSize) {
+        const chunk = leftInt16.subarray(i, i + sampleBlockSize);
+        const mp3buf = mp3encoder.encodeBuffer(chunk);
+        if (mp3buf.length > 0) mp3Data.push(mp3buf);
+      }
+    } else {
+      const rightFloat = (numChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)).subarray(startSample, endSample);
+      const rightInt16 = floatToInt16(rightFloat);
+
+      for (let i = 0; i < leftInt16.length; i += sampleBlockSize) {
+        const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
+        const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
+        const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+        if (mp3buf.length > 0) mp3Data.push(mp3buf);
+      }
+    }
+
+    const mp3buf = mp3encoder.flush();
+    if (mp3buf.length > 0) mp3Data.push(mp3buf);
+
+    return new Blob(mp3Data, { type: 'audio/mp3' });
   }
 
   // ==========================================================================
@@ -530,7 +677,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function saveToHistory(item) {
     try {
       const items = JSON.parse(localStorage.getItem('audiocut_history') || '[]');
-      // Add to front
       items.unshift({
         title: item.title,
         downloadUrl: item.downloadUrl,
@@ -541,7 +687,6 @@ document.addEventListener('DOMContentLoaded', () => {
         bitrate: item.bitrate,
         timestamp: Date.now()
       });
-      // Keep max 10
       localStorage.setItem('audiocut_history', JSON.stringify(items.slice(0, 10)));
       loadHistory();
     } catch (e) {
@@ -568,11 +713,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/health');
       const data = await res.json();
-
-      ytdlpStatusBadge.textContent = data.ytdlpAvailable ? 'Installed' : 'Simulated Fallback';
+      ytdlpStatusBadge.textContent = data.ytdlpAvailable ? 'Installed' : 'Unavailable';
       ytdlpStatusBadge.classList.toggle('online', data.ytdlpAvailable);
 
-      ffmpegStatusBadge.textContent = data.ffmpegAvailable ? 'Installed' : 'Standard Pipeline';
+      ffmpegStatusBadge.textContent = data.ffmpegAvailable ? 'Installed' : 'Unavailable';
       ffmpegStatusBadge.classList.toggle('online', data.ffmpegAvailable);
 
       nodeVersionBadge.textContent = data.nodeVersion || '-';
@@ -592,9 +736,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   systemModal.addEventListener('click', (e) => {
-    if (e.target === systemModal) {
-      systemModal.style.display = 'none';
-    }
+    if (e.target === systemModal) systemModal.style.display = 'none';
   });
 
   // Initial load

@@ -357,6 +357,90 @@ async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputD
   };
 }
 
+// In-memory cache for full audio files to prevent downloading the same video twice
+const fullAudioCache = new Map();
+
+// Download the complete audio track from YouTube
+async function getFullAudio({ url, outputDir }) {
+  const videoId = extractVideoId(url);
+  if (!videoId) throw new Error('Invalid YouTube URL');
+
+  // Check cache first
+  if (fullAudioCache.has(videoId)) {
+    const cached = fullAudioCache.get(videoId);
+    if (fs.existsSync(cached.outputPath)) {
+      return cached;
+    }
+  }
+
+  const info = await getVideoInfo(url);
+  const cleanTitle = (info.title || 'audio')
+    .replace(/[^\w\s\-_.]/gi, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .slice(0, 40) || 'track';
+
+  const fileId = crypto.randomBytes(8).toString('hex');
+  const filename = `${cleanTitle}_full_${fileId}.mp3`;
+  const outputPath = path.join(outputDir, filename);
+
+  if (!YTDLP_STRATEGY) {
+    throw new Error('Audio extraction engine (yt-dlp) is not available.');
+  }
+
+  const ytdlpArgs = [
+    '--extractor-args', 'youtube:player_client=ios,android,web',
+    '-f', 'ba[ext=m4a]/ba[ext=opus]/ba/18/b',
+    '-x',
+    '--audio-format', 'mp3',
+    '--audio-quality', '192k',
+    '--no-playlist',
+    '--no-cache-dir',
+    '--force-overwrites',
+    '-o', outputPath,
+    `https://www.youtube.com/watch?v=${videoId}`
+  ];
+
+  const runner = getYtDlpRunner(ytdlpArgs);
+
+  await new Promise((resolve, reject) => {
+    const proc = spawn(runner.command, runner.args, { 
+      cwd: runner.cwd, 
+      timeout: 120000 
+    });
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+        resolve();
+      } else {
+        const errorMsg = stderr || `Extraction process exited with code ${code}`;
+        console.error('Full audio extraction error:', errorMsg);
+        reject(new Error(errorMsg));
+      }
+    });
+    proc.on('error', reject);
+  });
+
+  const res = {
+    fileId,
+    filename,
+    outputPath,
+    title: info.title,
+    author: info.author,
+    thumbnail: info.thumbnail,
+    duration: info.duration,
+    durationFormatted: info.durationFormatted,
+    bitrate: '192 kbps',
+    fileSize: fs.statSync(outputPath).size,
+    streamUrl: `/api/stream/${fileId}`,
+    downloadUrl: `/api/download/${fileId}`
+  };
+
+  fullAudioCache.set(videoId, res);
+  return res;
+}
+
 module.exports = {
   YTDLP_STRATEGY,
   FFMPEG_PATH,
@@ -364,5 +448,7 @@ module.exports = {
   formatDuration,
   parseTimestamp,
   getVideoInfo,
-  cutAndConvert
+  cutAndConvert,
+  getFullAudio
 };
+

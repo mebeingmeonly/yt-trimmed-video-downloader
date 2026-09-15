@@ -7,6 +7,7 @@ const {
   FFMPEG_PATH, 
   getVideoInfo, 
   cutAndConvert,
+  getFullAudio,
   extractVideoId 
 } = require('./downloader');
 
@@ -170,7 +171,33 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // 3. Cut & Convert
+  // 3. Fetch Full Audio for In-Browser Trimming
+  if ((req.method === 'POST' || req.method === 'GET') && (pathname === '/api/full-audio' || pathname === '/api/audio')) {
+    try {
+      let videoUrl = parsedUrl.query.url;
+      if (req.method === 'POST') {
+        const body = await parseBody(req);
+        if (body.url) videoUrl = body.url;
+      }
+
+      if (!videoUrl) {
+        return sendJSON(res, 400, { error: 'YouTube URL is required' });
+      }
+
+      const result = await getFullAudio({
+        url: videoUrl,
+        outputDir: DOWNLOADS_DIR
+      });
+
+      cutsRegistry.set(result.fileId, result);
+      return sendJSON(res, 200, result);
+    } catch (err) {
+      console.error('Full audio extraction error:', err);
+      return sendJSON(res, 500, { error: err.message || 'Error extracting full audio track' });
+    }
+  }
+
+  // 4. Cut & Convert
   if (req.method === 'POST' && pathname === '/api/convert') {
     try {
       const body = await parseBody(req);
