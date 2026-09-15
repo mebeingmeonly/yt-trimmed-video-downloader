@@ -368,6 +368,9 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const payload = {
         url: currentVideoData.url,
+        title: currentVideoData.title,
+        author: currentVideoData.author,
+        thumbnail: currentVideoData.thumbnail,
         startTime: formatSecondsToTime(startSec),
         endTime: formatSecondsToTime(endSec),
         bitrate: selectedBitrate

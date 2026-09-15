@@ -260,7 +260,7 @@ async function generatePlayableMp3(outputPath, durationSeconds, bitrate = '192')
 }
 
 // Cut and convert to MP3
-async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputDir }) {
+async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputDir, title, author, thumbnail }) {
   const videoId = extractVideoId(url);
   if (!videoId) throw new Error('Invalid YouTube URL');
 
@@ -272,7 +272,16 @@ async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputD
   }
 
   const durationSec = endSec - startSec;
-  const info = await getVideoInfo(url);
+  
+  // Reuse client metadata if available to save 5-8 seconds of redundant network calls
+  let info = { title, author, thumbnail };
+  if (!info.title) {
+    try {
+      info = await getVideoInfo(url);
+    } catch (e) {
+      info = { title: `YouTube_${videoId}`, author: 'YouTube', thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` };
+    }
+  }
   
   const cleanTitle = (info.title || 'audio')
     .replace(/[^\w\s\-_.]/gi, '')
@@ -284,64 +293,52 @@ async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputD
   const filename = `${cleanTitle}_cut_${formatDuration(startSec).replace(/:/g, '-')}_to_${formatDuration(endSec).replace(/:/g, '-')}_${fileId}.mp3`;
   const outputPath = path.join(outputDir, filename);
 
-  // Check if yt-dlp is available to do live extraction
-  if (YTDLP_STRATEGY) {
-    try {
-      const sectionArg = `*${formatDuration(startSec)}-${formatDuration(endSec)}`;
-      const ytdlpArgs = [
-        '-x',
-        '--audio-format', 'mp3',
-        '--audio-quality', `${bitrate}k`,
-        '--download-sections', sectionArg,
-        '--extractor-args', 'youtube:player_client=android',
-        '--no-playlist',
-        '--force-overwrites',
-        '-o', outputPath,
-        url
-      ];
-
-      const runner = getYtDlpRunner(ytdlpArgs);
-
-      await new Promise((resolve, reject) => {
-        const proc = spawn(runner.command, runner.args, { 
-          cwd: runner.cwd, 
-          timeout: 90000 
-        });
-        let stderr = '';
-        proc.stderr.on('data', (d) => { stderr += d.toString(); });
-        proc.stdout.on('data', (d) => { /* debug */ });
-        proc.on('close', (code) => {
-          if (code === 0 && fs.existsSync(outputPath)) {
-            resolve();
-          } else {
-            reject(new Error(stderr || `yt-dlp exited with code ${code}`));
-          }
-        });
-        proc.on('error', reject);
-      });
-
-      return {
-        fileId,
-        filename,
-        outputPath,
-        title: info.title,
-        author: info.author,
-        thumbnail: info.thumbnail,
-        startFormatted: formatDuration(startSec),
-        endFormatted: formatDuration(endSec),
-        duration: durationSec,
-        durationFormatted: formatDuration(durationSec),
-        bitrate: `${bitrate} kbps`,
-        fileSize: fs.statSync(outputPath).size,
-        isSimulated: false
-      };
-    } catch (err) {
-      console.warn('Real download with yt-dlp failed, falling back to valid playable audio:', err.message);
-    }
+  if (!YTDLP_STRATEGY) {
+    throw new Error('Audio extraction engine (yt-dlp) is not available on the server.');
   }
 
-  // Fallback: Generate real valid audio via ffmpeg
-  await generatePlayableMp3(outputPath, durationSec, bitrate);
+  const startFormatted = formatDuration(startSec);
+  const endFormatted = formatDuration(endSec);
+
+  // High-performance slice arguments:
+  // 1. '-f ba[ext=m4a]/ba[ext=opus]/ba/18/b' -> downloads audio only (10x smaller than video)
+  // 2. '--downloader ffmpeg --downloader-args ...' -> fast stream seeking directly at byte range
+  // 3. 'youtube:player_client=ios,android,web' -> bypasses 403 Forbidden & SABR throttling
+  const ytdlpArgs = [
+    '--extractor-args', 'youtube:player_client=ios,android,web',
+    '-f', 'ba[ext=m4a]/ba[ext=opus]/ba/18/b',
+    '--downloader', 'ffmpeg',
+    '--downloader-args', `ffmpeg_i:-ss ${startFormatted} -to ${endFormatted}`,
+    '-x',
+    '--audio-format', 'mp3',
+    '--audio-quality', `${bitrate}k`,
+    '--no-playlist',
+    '--no-cache-dir',
+    '--force-overwrites',
+    '-o', outputPath,
+    url
+  ];
+
+  const runner = getYtDlpRunner(ytdlpArgs);
+
+  await new Promise((resolve, reject) => {
+    const proc = spawn(runner.command, runner.args, { 
+      cwd: runner.cwd, 
+      timeout: 60000 
+    });
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+        resolve();
+      } else {
+        const errorMsg = stderr || `Extraction process exited with code ${code}`;
+        console.error('yt-dlp error:', errorMsg);
+        reject(new Error(errorMsg));
+      }
+    });
+    proc.on('error', reject);
+  });
 
   return {
     fileId,
@@ -350,16 +347,13 @@ async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputD
     title: info.title,
     author: info.author,
     thumbnail: info.thumbnail,
-    startFormatted: formatDuration(startSec),
-    endFormatted: formatDuration(endSec),
+    startFormatted,
+    endFormatted,
     duration: durationSec,
     durationFormatted: formatDuration(durationSec),
     bitrate: `${bitrate} kbps`,
     fileSize: fs.statSync(outputPath).size,
-    isSimulated: true,
-    simulationNotice: YTDLP_STRATEGY 
-      ? 'YouTube download blocked or restricted by network. Generated valid preview MP3.' 
-      : 'yt-dlp engine not available. Generated valid preview MP3.'
+    isSimulated: false
   };
 }
 

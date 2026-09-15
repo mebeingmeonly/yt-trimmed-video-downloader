@@ -174,7 +174,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && pathname === '/api/convert') {
     try {
       const body = await parseBody(req);
-      const { url: videoUrl, startTime = '00:00', endTime, bitrate = '192' } = body;
+      const { url: videoUrl, startTime = '00:00', endTime, bitrate = '192', title, author, thumbnail } = body;
 
       if (!videoUrl) {
         return sendJSON(res, 400, { error: 'YouTube URL is required' });
@@ -189,7 +189,10 @@ const server = http.createServer(async (req, res) => {
         startTime,
         endTime,
         bitrate,
-        outputDir: DOWNLOADS_DIR
+        outputDir: DOWNLOADS_DIR,
+        title,
+        author,
+        thumbnail
       });
 
       // Save into registry
