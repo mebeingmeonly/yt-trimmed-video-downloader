@@ -158,7 +158,7 @@ async function getVideoInfo(url) {
         '--dump-json',
         '--skip-download',
         '--no-warnings',
-        '--extractor-args', 'youtube:player_client=android',
+        '--extractor-args', 'youtube:player_skip=configs,webpage;player_client=android,ios',
         standardUrl
       ]);
 
@@ -389,8 +389,9 @@ async function getFullAudio({ url, outputDir }) {
   }
 
   const ytdlpArgs = [
-    '--extractor-args', 'youtube:player_client=ios,android,web',
+    '--extractor-args', 'youtube:player_skip=configs,webpage;player_client=android,ios',
     '-f', 'ba[ext=m4a]/ba[ext=opus]/ba/18/b',
+    '--user-agent', 'com.google.android.youtube/19.29.37 (Linux; U; Android 14) gzip',
     '-x',
     '--audio-format', 'mp3',
     '--audio-quality', '192k',
