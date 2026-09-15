@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+bin/
+yt_dlp/
+
+# Generated audio downloads
+downloads/
+*.mp3
+*.wav
+*.mp4
+*.part
+
+# Environment & OS
+.DS_Store
+.env
+*.log
+npm-debug.log*
