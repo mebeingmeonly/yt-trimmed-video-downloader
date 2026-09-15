@@ -321,9 +321,27 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, reqPath);
 });
 
+function getLocalIp() {
+  try {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+  } catch (e) {}
+  return 'localhost';
+}
+
 function startServer(portToTry) {
-  server.listen(portToTry, () => {
-    console.log(`Server running at http://localhost:${portToTry}`);
+  server.listen(portToTry, '0.0.0.0', () => {
+    const localIp = getLocalIp();
+    console.log(`Server running!`);
+    console.log(`- On your Mac:    http://localhost:${portToTry}`);
+    console.log(`- On your Mobile: http://${localIp}:${portToTry}`);
     console.log(`yt-dlp: ${YTDLP_STRATEGY ? 'Available (' + YTDLP_STRATEGY + ')' : 'Not found (Preview Mode)'}`);
     console.log(`ffmpeg: ${FFMPEG_PATH ? 'Available (' + FFMPEG_PATH + ')' : 'Not found'}`);
   });
@@ -333,8 +351,9 @@ server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.log(`Port ${PORT} is busy, trying next port...`);
     const nextPort = Number(PORT) + 1;
-    server.listen(nextPort, () => {
-      console.log(`Server running at http://localhost:${nextPort}`);
+    server.listen(nextPort, '0.0.0.0', () => {
+      const localIp = getLocalIp();
+      console.log(`Server running at http://${localIp}:${nextPort}`);
     });
   } else {
     console.error('Server error:', err);
