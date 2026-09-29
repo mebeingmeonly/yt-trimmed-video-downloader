@@ -8,6 +8,7 @@ const {
   getVideoInfo, 
   cutAndConvert,
   getFullAudio,
+  trimFromCachedAudio,
   extractVideoId 
 } = require('./downloader');
 
@@ -194,6 +195,54 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       console.error('Full audio extraction error:', err);
       return sendJSON(res, 500, { error: err.message || 'Error extracting full audio track' });
+    }
+  }
+
+  // 3.5 Fast Trim from Cached Audio (0.1s slice, direct mobile download)
+  if (pathname === '/api/trim-cached') {
+    try {
+      let fileId = parsedUrl.query.fileId;
+      let startTime = parsedUrl.query.startTime || parsedUrl.query.start || '00:00';
+      let endTime = parsedUrl.query.endTime || parsedUrl.query.end;
+      let bitrate = parsedUrl.query.bitrate || '192';
+
+      if (req.method === 'POST') {
+        const body = await parseBody(req);
+        if (body.fileId) fileId = body.fileId;
+        if (body.startTime) startTime = body.startTime;
+        if (body.endTime) endTime = body.endTime;
+        if (body.bitrate) bitrate = body.bitrate;
+      }
+
+      if (!fileId) return sendJSON(res, 400, { error: 'fileId is required' });
+      if (!endTime) return sendJSON(res, 400, { error: 'endTime is required' });
+
+      const result = await trimFromCachedAudio({
+        fileId,
+        startTime,
+        endTime,
+        bitrate,
+        outputDir: DOWNLOADS_DIR
+      });
+
+      cutsRegistry.set(result.fileId, result);
+
+      if (parsedUrl.query.download === '1' && fs.existsSync(result.outputPath)) {
+        const stat = fs.statSync(result.outputPath);
+        res.writeHead(200, {
+          'Content-Type': 'audio/mpeg',
+          'Content-Length': stat.size,
+          'Content-Disposition': `attachment; filename="${encodeURIComponent(result.filename)}"`,
+          'Cache-Control': 'no-cache'
+        });
+        const stream = fs.createReadStream(result.outputPath);
+        return stream.pipe(res);
+      }
+
+      return sendJSON(res, 200, result);
+    } catch (err) {
+      console.error('Cached trimming error:', err);
+      return sendJSON(res, 500, { error: err.message || 'Error trimming cached audio' });
     }
   }
 

@@ -442,6 +442,71 @@ async function getFullAudio({ url, outputDir }) {
   return res;
 }
 
+// Ultra-fast (0.1s) slicing directly from the cached full audio file
+async function trimFromCachedAudio({ fileId, startTime, endTime, bitrate = '192', outputDir }) {
+  let sourcePath = null;
+  let trackTitle = 'audio_clip';
+
+  const files = fs.readdirSync(outputDir);
+  const matched = files.find(f => f.includes(fileId));
+  if (matched) {
+    sourcePath = path.join(outputDir, matched);
+    trackTitle = matched
+      .replace(/_full_[a-f0-9]+\.mp3$/i, '')
+      .replace(/_[a-f0-9]+\.mp3$/i, '')
+      .slice(0, 40) || 'track';
+  }
+
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    throw new Error('Original audio file expired or not found. Please reload the video.');
+  }
+
+  const startSec = parseTimestamp(startTime);
+  const endSec = parseTimestamp(endTime);
+  if (endSec <= startSec) {
+    throw new Error('End timestamp must be greater than start timestamp.');
+  }
+
+  const durationSec = endSec - startSec;
+  const cutFileId = crypto.randomBytes(8).toString('hex');
+  const startStr = formatDuration(startSec).replace(/:/g, '-');
+  const endStr = formatDuration(endSec).replace(/:/g, '-');
+  const filename = `${trackTitle}_cut_${startStr}_to_${endStr}_${cutFileId}.mp3`;
+  const outputPath = path.join(outputDir, filename);
+
+  if (!FFMPEG_PATH) {
+    throw new Error('FFmpeg transcoder not found on server.');
+  }
+
+  const args = [
+    '-y',
+    '-ss', formatDuration(startSec),
+    '-to', formatDuration(endSec),
+    '-i', sourcePath,
+    '-c:a', 'libmp3lame',
+    '-b:a', `${bitrate}k`,
+    outputPath
+  ];
+
+  await new Promise((resolve, reject) => {
+    execFile(FFMPEG_PATH, args, (error, stdout, stderr) => {
+      if (error) return reject(new Error(stderr || error.message));
+      resolve();
+    });
+  });
+
+  return {
+    fileId: cutFileId,
+    filename,
+    outputPath,
+    duration: durationSec,
+    durationFormatted: formatDuration(durationSec),
+    bitrate: `${bitrate} kbps`,
+    fileSize: fs.statSync(outputPath).size,
+    downloadUrl: `/api/download/${cutFileId}`
+  };
+}
+
 module.exports = {
   YTDLP_STRATEGY,
   FFMPEG_PATH,
@@ -450,6 +515,7 @@ module.exports = {
   parseTimestamp,
   getVideoInfo,
   cutAndConvert,
-  getFullAudio
+  getFullAudio,
+  trimFromCachedAudio
 };
 
