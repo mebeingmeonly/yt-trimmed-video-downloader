@@ -32,14 +32,6 @@ function findFfmpeg() {
 
 // Detect yt-dlp execution strategy
 function checkYtDlpAvailable() {
-  try {
-    const res = execSync('python3 -c "import yt_dlp; print(1)" 2>/dev/null', { 
-      cwd: __dirname,
-      encoding: 'utf8' 
-    }).trim();
-    if (res === '1') return 'python_module';
-  } catch (e) {}
-
   const localBin = path.join(__dirname, 'bin', 'yt-dlp');
   if (fs.existsSync(localBin)) {
     try {
@@ -51,6 +43,14 @@ function checkYtDlpAvailable() {
   try {
     const whichRes = execSync('which yt-dlp 2>/dev/null', { encoding: 'utf8' }).trim();
     if (whichRes && fs.existsSync(whichRes)) return 'system_bin';
+  } catch (e) {}
+
+  try {
+    const res = execSync('python3 -c "import yt_dlp; print(1)" 2>/dev/null', { 
+      cwd: __dirname,
+      encoding: 'utf8' 
+    }).trim();
+    if (res === '1') return 'python_module';
   } catch (e) {}
 
   return null;
@@ -65,13 +65,12 @@ function getYtDlpRunner(userArgs) {
     commonArgs.push('--ffmpeg-location', FFMPEG_PATH);
   }
 
-  if (YTDLP_STRATEGY === 'python_module') {
-    return {
-      command: 'python3',
-      args: ['-m', 'yt_dlp', ...commonArgs, ...userArgs],
-      cwd: __dirname
-    };
-  } else if (YTDLP_STRATEGY === 'local_bin') {
+  // Pass Node.js as the external JS runtime to solve YouTube n-sig / EJS challenges seamlessly
+  if (process.execPath && fs.existsSync(process.execPath)) {
+    commonArgs.push('--js-runtimes', `node:${process.execPath}`);
+  }
+
+  if (YTDLP_STRATEGY === 'local_bin') {
     return {
       command: path.join(__dirname, 'bin', 'yt-dlp'),
       args: [...commonArgs, ...userArgs],
@@ -81,6 +80,12 @@ function getYtDlpRunner(userArgs) {
     return {
       command: 'yt-dlp',
       args: [...commonArgs, ...userArgs],
+      cwd: __dirname
+    };
+  } else if (YTDLP_STRATEGY === 'python_module') {
+    return {
+      command: 'python3',
+      args: ['-m', 'yt_dlp', ...commonArgs, ...userArgs],
       cwd: __dirname
     };
   }
@@ -305,7 +310,7 @@ async function cutAndConvert({ url, startTime, endTime, bitrate = '192', outputD
   // 2. '--downloader ffmpeg --downloader-args ...' -> fast stream seeking directly at byte range
   // 3. 'youtube:player_client=ios,android,web' -> bypasses 403 Forbidden & SABR throttling
   const ytdlpArgs = [
-    '--extractor-args', 'youtube:player_client=ios,android,web',
+    '--extractor-args', 'youtube:player_client=visionos,tv,android_vr,web',
     '-f', 'ba[ext=m4a]/ba[ext=opus]/ba/18/b',
     '--downloader', 'ffmpeg',
     '--downloader-args', `ffmpeg_i:-ss ${startFormatted} -to ${endFormatted}`,
@@ -389,9 +394,8 @@ async function getFullAudio({ url, outputDir }) {
   }
 
   const ytdlpArgs = [
-    '--extractor-args', 'youtube:player_skip=configs,webpage;player_client=android,ios',
+    '--extractor-args', 'youtube:player_client=visionos,tv,android_vr,web',
     '-f', 'ba[ext=m4a]/ba[ext=opus]/ba/18/b',
-    '--user-agent', 'com.google.android.youtube/19.29.37 (Linux; U; Android 14) gzip',
     '-x',
     '--audio-format', 'mp3',
     '--audio-quality', '192k',
