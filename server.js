@@ -229,11 +229,14 @@ const server = http.createServer(async (req, res) => {
 
       if (parsedUrl.query.download === '1' && fs.existsSync(result.outputPath)) {
         const stat = fs.statSync(result.outputPath);
+        const safeFilename = (result.filename || 'cut.mp3').replace(/[^\w\s\-_.]/g, '').replace(/"/g, '') || 'audio_cut.mp3';
         res.writeHead(200, {
           'Content-Type': 'audio/mpeg',
           'Content-Length': stat.size,
-          'Content-Disposition': `attachment; filename="${encodeURIComponent(result.filename)}"`,
-          'Cache-Control': 'no-cache'
+          'Content-Disposition': `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(result.filename)}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
         });
         const stream = fs.createReadStream(result.outputPath);
         return stream.pipe(res);

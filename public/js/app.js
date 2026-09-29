@@ -61,6 +61,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const trimmedSpinner = downloadTrimmedBtn.querySelector('.btn-spinner');
   const trimmedIcon = downloadTrimmedBtn.querySelector('.btn-icon');
   const downloadFullBtn = document.getElementById('downloadFullBtn');
+  const downloadReadyBanner = document.getElementById('downloadReadyBanner');
+  const downloadReadyText = document.getElementById('downloadReadyText');
+  const directDownloadLink = document.getElementById('directDownloadLink');
 
   // History & System Modal
   const historyList = document.getElementById('historyList');
@@ -198,6 +201,16 @@ document.addEventListener('DOMContentLoaded', () => {
       showUrlStatus('Invalid YouTube URL. Please check your link.', 'error');
       return;
     }
+
+    if (downloadReadyBanner) {
+      downloadReadyBanner.style.display = 'none';
+    }
+    if (cutPreviewStopTimer) {
+      clearTimeout(cutPreviewStopTimer);
+      cutPreviewStopTimer = null;
+    }
+    isPreviewingCut = false;
+    showPlayIcon();
 
     showUrlStatus('Connecting to YouTube...', 'loading');
     setLoadingState(true);
@@ -552,15 +565,42 @@ document.addEventListener('DOMContentLoaded', () => {
       const endStr = formatSecondsToTime(endSec).replace(/:/g, '-');
       const filename = `${cleanTitle}_cut_${startStr}_to_${endStr}.mp3`;
 
-      // Fast cached server cut (0.1s slice, 100% reliable on all mobile browsers)
-      const cachedTrimUrl = `/api/trim-cached?fileId=${encodeURIComponent(currentAudioData.fileId)}&startTime=${encodeURIComponent(formatSecondsToTime(startSec))}&endTime=${encodeURIComponent(formatSecondsToTime(endSec))}&download=1`;
+      // Fast cached server cut with unique timestamp cache-buster
+      const cachedTrimUrl = `/api/trim-cached?fileId=${encodeURIComponent(currentAudioData.fileId)}&startTime=${encodeURIComponent(formatSecondsToTime(startSec))}&endTime=${encodeURIComponent(formatSecondsToTime(endSec))}&download=1&_t=${Date.now()}`;
 
+      // 1. Update persistent fallback direct download link & show banner
+      if (downloadReadyBanner && directDownloadLink) {
+        directDownloadLink.href = cachedTrimUrl;
+        directDownloadLink.setAttribute('download', filename);
+        if (downloadReadyText) {
+          downloadReadyText.textContent = `Cut Ready: ${formatSecondsToTime(startSec)} - ${formatSecondsToTime(endSec)}`;
+        }
+        downloadReadyBanner.style.display = 'flex';
+      }
+
+      // 2. Trigger download via hidden iframe (bypasses browser popup blocking for repeated downloads on iOS/Android)
+      let dlFrame = document.getElementById('hidden_dl_frame');
+      if (!dlFrame) {
+        dlFrame = document.createElement('iframe');
+        dlFrame.id = 'hidden_dl_frame';
+        dlFrame.style.display = 'none';
+        document.body.appendChild(dlFrame);
+      }
+      dlFrame.src = cachedTrimUrl;
+
+      // 3. Fallback programmatic anchor click
       const downloadLinkEl = document.createElement('a');
       downloadLinkEl.href = cachedTrimUrl;
       downloadLinkEl.setAttribute('download', filename);
+      downloadLinkEl.target = '_blank';
+      downloadLinkEl.rel = 'noopener';
       document.body.appendChild(downloadLinkEl);
       downloadLinkEl.click();
-      document.body.removeChild(downloadLinkEl);
+      setTimeout(() => {
+        if (downloadLinkEl.parentNode) {
+          downloadLinkEl.parentNode.removeChild(downloadLinkEl);
+        }
+      }, 1000);
 
       saveToHistory({
         title: currentAudioData.title,
@@ -572,14 +612,13 @@ document.addEventListener('DOMContentLoaded', () => {
         bitrate: '192 kbps'
       });
 
-      setTimeout(() => {
-        setExportingState(false);
-      }, 500);
-
     } catch (err) {
       console.error('Download error:', err);
-      setExportingState(false);
       alert(`Download Error: ${err.message}`);
+    } finally {
+      setTimeout(() => {
+        setExportingState(false);
+      }, 400);
     }
   });
 

@@ -1288,3 +1288,40 @@ html, body {
   margin-top: 20px;
 }
 
+.download-ready-banner {
+  margin-top: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.ready-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--white);
+}
+
+.direct-download-link {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--white);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  padding: 2px 0;
+  opacity: 0.85;
+  transition: var(--transition);
+}
+
+.direct-download-link:hover {
+  opacity: 1;
+}
+
